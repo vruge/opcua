@@ -63,6 +63,23 @@ func FindServersOnNetwork(ctx context.Context, endpoint string, opts ...Option) 
 	return res.Servers, nil
 }
 
+func GetEndpointsReverse(ctx context.Context, endpoint string, conn *uacp.Conn, opts ...Option) ([]*ua.EndpointDescription, error) {
+	opts = append(opts, AutoReconnect(false))
+	c, err := NewClientReverse(endpoint, conn, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.Dial(ctx); err != nil {
+		return nil, err
+	}
+	defer c.Close(ctx)
+	res, err := c.GetEndpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return res.Endpoints, nil
+}
+
 // GetEndpoints returns the available endpoint descriptions for the server.
 func GetEndpoints(ctx context.Context, endpoint string, opts ...Option) ([]*ua.EndpointDescription, error) {
 	opts = append(opts, AutoReconnect(false))
@@ -174,6 +191,31 @@ type Client struct {
 	monitorOnce sync.Once
 }
 
+func NewClientReverse(endpoint string, conn *uacp.Conn, opts ...Option) (*Client, error) {
+	cfg, err := ApplyConfig(opts...)
+	if err != nil {
+		return nil, err
+	}
+	c := Client{
+		endpointURL: endpoint,
+		cfg:         cfg,
+		sechanErr:   make(chan error, 1),
+		subs:        make(map[uint32]*Subscription),
+		pendingAcks: make([]*ua.SubscriptionAcknowledgement, 0),
+		pausech:     make(chan struct{}, 2),
+		resumech:    make(chan struct{}, 2),
+	}
+	c.pauseSubscriptions(context.Background())
+	c.setPublishTimeout(uasc.MaxTimeout)
+	c.setState(Closed)
+	c.setSecureChannel(nil)
+	c.setSession(nil)
+	c.setNamespaces([]string{})
+
+	c.conn = conn
+	return &c, nil
+}
+
 // NewClient creates a new Client.
 //
 // When no options are provided the new client is created from
@@ -221,7 +263,6 @@ const (
 	transferSubscriptions // move subscriptions from one session to another
 	abortReconnect        // the reconnecting is not possible
 )
-
 
 func (c *Client) ReverseConnect(ctx context.Context, conn *uacp.Conn) error {
 	c.conn = conn
