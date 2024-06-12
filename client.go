@@ -222,6 +222,12 @@ const (
 	abortReconnect        // the reconnecting is not possible
 )
 
+
+func (c *Client) ReverseConnect(ctx context.Context, conn *uacp.Conn) error {
+	c.conn = conn
+	return c.Connect(ctx)
+}
+
 // Connect establishes a secure channel and creates a new session.
 func (c *Client) Connect(ctx context.Context) error {
 	// todo(fs): the secure channel is 'nil' during a re-connect
@@ -591,10 +597,13 @@ func (c *Client) Dial(ctx context.Context) error {
 	}
 
 	var err error
-	var d = NewDialer(c.cfg)
-	c.conn, err = d.Dial(ctx, c.endpointURL)
-	if err != nil {
-		return err
+
+	if c.conn == nil {
+		var d = NewDialer(c.cfg)
+		c.conn, err = d.Dial(ctx, c.endpointURL)
+		if err != nil {
+			return err
+		}
 	}
 
 	sc, err := uasc.NewSecureChannel(c.endpointURL, c.conn, c.cfg.sechan, c.sechanErr)
